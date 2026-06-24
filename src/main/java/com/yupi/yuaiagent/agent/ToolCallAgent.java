@@ -35,6 +35,9 @@ public class ToolCallAgent extends ReActAgent {
     // 保存工具调用信息的响应结果（要调用那些工具）
     private ChatResponse toolCallChatResponse;
 
+    // 保存 LLM 不调用工具时的文本回复
+    private String lastThinkingResult = "";
+
     // 工具调用管理者
     private final ToolCallingManager toolCallingManager;
 
@@ -69,7 +72,7 @@ public class ToolCallAgent extends ReActAgent {
         try {
             ChatResponse chatResponse = getChatClient().prompt(prompt)
                     .system(getSystemPrompt())
-                    .tools(availableTools)
+                    .toolCallbacks(availableTools)
                     .call()
                     .chatResponse();
             // 记录响应，用于等下 Act
@@ -87,10 +90,12 @@ public class ToolCallAgent extends ReActAgent {
                     .map(toolCall -> String.format("工具名称：%s，参数：%s", toolCall.name(), toolCall.arguments()))
                     .collect(Collectors.joining("\n"));
             log.info(toolCallInfo);
-            // 如果不需要调用工具，返回 false
+            // 如果不需要调用工具，说明任务已完成，返回 false 并终止循环
             if (toolCallList.isEmpty()) {
                 // 只有不调用工具时，才需要手动记录助手消息
                 getMessageList().add(assistantMessage);
+                lastThinkingResult = result;
+                setState(AgentState.FINISHED);
                 return false;
             } else {
                 // 需要调用工具时，无需记录助手消息，因为调用工具时会自动记录
@@ -101,6 +106,15 @@ public class ToolCallAgent extends ReActAgent {
             getMessageList().add(new AssistantMessage("处理时遇到了错误：" + e.getMessage()));
             return false;
         }
+    }
+
+    @Override
+    public String step() {
+        boolean shouldAct = think();
+        if (!shouldAct) {
+            return lastThinkingResult;
+        }
+        return act();
     }
 
     /**
